@@ -10,6 +10,9 @@ import (
 	"time"
 )
 
+type UpdateParam = map[string]interface{}
+type Map = map[string]interface{}
+
 // DB contains information for current db connection
 type DB struct {
 	Value        interface{}
@@ -196,6 +199,78 @@ func (s *DB) Where(query interface{}, args ...interface{}) *DB {
 	return s.clone().search.Where(query, args...).db
 }
 
+//robert: Filter is a wrapper for Where, to support Beego syntax
+func (s *DB) Filter(query interface{}, args ...interface{}) *DB {
+	if len(args) > 0 {
+		field := query.(string)
+		if strings.Index(field, "__") != -1 {
+			items := strings.Split(field, "__")
+			if len(items) == 2 {
+				field := items[0]
+				op := items[1]
+				
+				if op == "in" {
+					field = fmt.Sprintf("%s in (?)", field)
+				} else if op == "gt" {
+					field = fmt.Sprintf("%s > ?", field)
+				} else if op == "gte" {
+					field = fmt.Sprintf("%s >= ?", field)
+				} else if op == "lt" {
+					field = fmt.Sprintf("%s < ?", field)
+				} else if op == "lte" {
+					field = fmt.Sprintf("%s <= ?", field)
+				} else if op == "contains" {
+					field = fmt.Sprintf("%s LIKE ?", field)
+					args[0] = fmt.Sprintf("%%%s%%", args[0].(string))
+				} else if op == "between" {
+					field = fmt.Sprintf("%s BETWEEN ? AND ?", field)
+				}
+				return s.Where(field, args...)
+			} else {
+				return s.Where(query, args...)
+			}
+		} else {
+			query = fmt.Sprintf("%s = ?", query)
+			return s.Where(query, args...)
+		}
+	} else {
+		db := s
+		conditions := query.(map[string]interface{})
+		for k, v := range conditions {
+			if strings.Index(k, "__") != -1 {
+				items := strings.Split(k, "__")
+				if len(items) == 2 {
+					field := items[0]
+					op := items[1]
+					
+					if op == "in" {
+						field = fmt.Sprintf("%s in (?)", field)
+					} else if op == "gt" {
+						field = fmt.Sprintf("%s > ?", field)
+					} else if op == "gte" {
+						field = fmt.Sprintf("%s >= ?", field)
+					} else if op == "lt" {
+						field = fmt.Sprintf("%s < ?", field)
+					} else if op == "lte" {
+						field = fmt.Sprintf("%s <= ?", field)
+					} else if op == "contains" {
+						field = fmt.Sprintf("%s LIKE ?", field)
+						v = fmt.Sprintf("%%%s%%", v.(string))
+					} else if op == "between" {
+						field = fmt.Sprintf("%s BETWEEN ? AND ?", field)
+					}
+					db = db.Where(field, v)
+				}
+			} else {
+				k = fmt.Sprintf("%s = ?", k)
+				db = db.Where(k, v)
+			}
+		}
+		
+		return db
+	}
+}
+
 // Or filter records that match before conditions or this one, similar to `Where`
 func (s *DB) Or(query interface{}, args ...interface{}) *DB {
 	return s.clone().search.Or(query, args...).db
@@ -314,6 +389,11 @@ func (s *DB) Find(out interface{}, where ...interface{}) *DB {
 	return s.NewScope(out).inlineCondition(where...).callCallbacks(s.parent.callbacks.queries).db
 }
 
+// robert: an Alias for Find, to support Beego ORM syntax
+func (s *DB) All(out interface{}) *DB {
+	return s.Find(out)
+}
+
 //Preloads preloads relations, don`t touch out
 func (s *DB) Preloads(out interface{}) *DB {
 	return s.NewScope(out).InstanceSet("gorm:only_preload", 1).callCallbacks(s.parent.callbacks.queries).db
@@ -397,12 +477,12 @@ func (s *DB) FirstOrCreate(out interface{}, where ...interface{}) *DB {
 }
 
 // Update update attributes with callbacks, refer: https://jinzhu.github.io/gorm/crud.html#update
-func (s *DB) Update(attrs ...interface{}) *DB {
-	return s.Updates(toSearchableMap(attrs...), true)
+func (s *DB) DirectlyUpdate(attrs ...interface{}) *DB {
+	return s.Update(toSearchableMap(attrs...), true)
 }
 
 // Updates update attributes with callbacks, refer: https://jinzhu.github.io/gorm/crud.html#update
-func (s *DB) Updates(values interface{}, ignoreProtectedAttrs ...bool) *DB {
+func (s *DB) Update(values interface{}, ignoreProtectedAttrs ...bool) *DB {
 	return s.NewScope(s.Value).
 		Set("gorm:ignore_protected_attrs", len(ignoreProtectedAttrs) > 0).
 		InstanceSet("gorm:update_interface", values).
@@ -442,9 +522,20 @@ func (s *DB) Create(value interface{}) *DB {
 	return scope.callCallbacks(s.parent.callbacks.creates).db
 }
 
+//robert: Insert is an alias for Create
+func (s *DB) Insert(value interface{}) *DB {
+	scope := s.NewScope(value)
+	return scope.callCallbacks(s.parent.callbacks.creates).db
+}
+
 // Delete delete value match given conditions, if the value has primary key, then will including the primary key as condition
-func (s *DB) Delete(value interface{}, where ...interface{}) *DB {
+func (s *DB) OriginDelete(value interface{}, where ...interface{}) *DB {
 	return s.NewScope(value).inlineCondition(where...).callCallbacks(s.parent.callbacks.deletes).db
+}
+
+// Delete: replace GORM OriginDelete, to support Beego ORM's syntax
+func (s *DB) Delete() *DB {
+	return s.NewScope(s.Value).callCallbacks(s.parent.callbacks.deletes).db
 }
 
 // Raw use raw sql as conditions, won't run it unless invoked by other methods
@@ -471,6 +562,11 @@ func (s *DB) Model(value interface{}) *DB {
 	c := s.clone()
 	c.Value = value
 	return c
+}
+
+//robert : QueryTable is an alias for Model func, to support Beego ORM syntax
+func (s *DB) QueryTable(value interface{}) *DB {
+	return s.Model(value)
 }
 
 // Table specify the table you would like to run db operations
